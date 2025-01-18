@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from .models import Task
 import pytz
-User = get_user_model()
+User = get_user_model() # учитывая, что это тестовое задание, ограничимся стандартным пользователем
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
