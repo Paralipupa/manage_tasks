@@ -1,6 +1,6 @@
 # Асинхронная система управления задачами
 
-Тестовое задание: REST API для асинхронного выполнения задач с использованием Django, DRF и Celery.
+REST API для асинхронного выполнения задач с использованием Django, DRF и Celery.
 
 ## Технологии
 
@@ -23,47 +23,14 @@ git clone <repository-url>
 cd <project-directory>
 ```
 
-2. Запустите проект с помощью Docker Compose:
+2. Создайте файл .env на основе .env.example
+
+3. Запустите проект:
 ```bash
-docker-compose up --build
+docker-compose -f docker-compose-develop.yml up --build
 ```
 
 Приложение будет доступно по адресу: http://localhost:8000
-
-### Локальная установка
-
-1. Создайте и активируйте виртуальное окружение:
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-# или
-venv\Scripts\activate  # Windows
-```
-
-2. Установите зависимости:
-```bash
-pip install -r requirements.txt
-```
-
-3. Примените миграции:
-```bash
-python manage.py migrate
-```
-
-4. Запустите Redis (необходим для Celery):
-```bash
-redis-server
-```
-
-5. В отдельном терминале запустите Celery:
-```bash
-celery -A config worker -l INFO
-```
-
-6. Запустите Django сервер:
-```bash
-python manage.py runserver
-```
 
 ## API Endpoints
 
@@ -86,18 +53,10 @@ python manage.py runserver
   }
   ```
 
-- `POST /api/token/refresh/` - Обновление JWT токена
-  ```json
-  {
-    "refresh": "refresh_token"
-  }
-  ```
-
 ### Задачи
 
-- `GET /api/tasks/` - Получение списка задач
+- `GET /api/tasks/` - Получение списка задач (с пагинацией)
   - Поддерживает фильтрацию по статусу: `?status=pending`
-  - Поддерживает пагинацию
 
 - `POST /api/tasks/` - Создание новой задачи
   ```json
@@ -107,7 +66,7 @@ python manage.py runserver
       "a": 10,
       "b": 20
     },
-    "scheduled_at": "2024-02-20 15:30:00"  // Опционально, московское время
+    "scheduled_at": "2024-01-18 15:30:00"  // Опционально, московское время
   }
   ```
   или
@@ -117,7 +76,7 @@ python manage.py runserver
     "input_data": {
       "seconds": 30
     },
-    "scheduled_at": "2024-02-20T12:30:00Z"  // Опционально, время в UTC (будет сконвертировано в MSK)
+    "scheduled_at": "2024-02-20T12:30:00Z"  
   }
   ```
 
