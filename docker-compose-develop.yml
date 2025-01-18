@@ -25,10 +25,12 @@ services:
       - DB_HOST=postgres
       - DB_PORT=5432
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - DEBUGPY_HOST=0.0.0.0
       - DEBUGPY_PORT=8001
-      - DEBUG = True
-
+      - DEBUG=True
+      - TZ=Europe/Moscow
 
   postgres:
     image: postgres:15-alpine
@@ -38,6 +40,7 @@ services:
       - POSTGRES_DB=task_manager
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+      - TZ=Europe/Moscow
     ports:
       - "5432:5432"
     healthcheck:
@@ -48,6 +51,8 @@ services:
 
   redis:
     image: redis:7-alpine
+    environment:
+      - TZ=Europe/Moscow
     ports:
       - "6379:6379"
     healthcheck:
@@ -57,8 +62,10 @@ services:
       retries: 5
 
   celery:
-    build: .
-    command: python -m debugpy --listen 0.0.0.0:8002 celery -A config worker -l INFO
+    build: 
+      context: .
+      dockerfile: Dockerfile-develop
+    command: sh -c "python -m debugpy --listen 0.0.0.0:8002 -m celery -A config worker --loglevel=info"
     volumes:
       - .:/app
     depends_on:
@@ -76,6 +83,12 @@ services:
       - DB_HOST=postgres
       - DB_PORT=5432
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DEBUGPY_HOST=0.0.0.0
+      - DEBUGPY_PORT=8002
+      - DEBUG=True
+      - TZ=Europe/Moscow
 
 volumes:
   postgres_data: 

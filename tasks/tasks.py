@@ -1,11 +1,16 @@
 import time
+import logging
 from celery import shared_task
 from .models import Task
 
+logger = logging.getLogger(__name__)
+
 @shared_task
 def process_task(task_id):
+    logger.info(f"Starting task {task_id}")
     try:
         task = Task.objects.get(id=task_id)
+        
         task.status = Task.TaskStatus.RUNNING
         task.save()
 

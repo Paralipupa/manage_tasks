@@ -1,12 +1,12 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 from .models import Task
-
+import pytz
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
-
+    
     class Meta:
         model = User
         fields = ('id', 'username', 'email', 'password')
@@ -21,7 +21,7 @@ class UserSerializer(serializers.ModelSerializer):
 
 class TaskSerializer(serializers.ModelSerializer):
     user = serializers.HiddenField(default=serializers.CurrentUserDefault())
-
+    # created_at = serializers.DateTimeField(format="%Y-%m-%dT%H:%M:%S%z", default_timezone=pytz.timezone('Europe/Moscow'))
     class Meta:
         model = Task
         fields = ('id', 'user', 'task_type', 'input_data', 'status', 'result', 'created_at')

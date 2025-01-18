@@ -1,7 +1,14 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.utils import timezone
+import pytz
 
 User = get_user_model()
+
+def get_moscow_time():
+    """Возвращает текущее московское время"""
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    return timezone.now().astimezone(moscow_tz).replace(tzinfo=None)
 
 class Task(models.Model):
     class TaskStatus(models.TextChoices):
@@ -41,6 +48,7 @@ class Task(models.Model):
         auto_now_add=True,
         verbose_name='Дата создания'
     )
+
 
     class Meta:
         verbose_name = 'Задача'
