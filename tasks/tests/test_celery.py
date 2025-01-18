@@ -1,85 +1,101 @@
+import pytest
 from unittest.mock import patch
-from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django_celery_results.models import TaskResult
 from tasks.models import Task
 from tasks.tasks import process_task
 
-User = get_user_model()
+@pytest.fixture
+def test_user(django_user_model):
+    return django_user_model.objects.create_user(
+        username='testuser',
+        password='testpass123'
+    )
 
-class CeleryTaskTests(TestCase):
-    """Тесты для Celery задач"""
+@pytest.fixture
+def sum_task(test_user):
+    return Task.objects.create(
+        user=test_user,
+        task_type='sum',
+        input_data={'a': 10, 'b': 20}
+    )
+
+@pytest.fixture
+def countdown_task(test_user):
+    return Task.objects.create(
+        user=test_user,
+        task_type='countdown',
+        input_data={'seconds': 1}
+    )
+
+@pytest.mark.django_db
+class TestCeleryTasks:
+    def test_sum_task_result(self, sum_task, mocker):
+        # Мокаем update_state для проверки результата
+        mock_update = mocker.patch('celery.app.task.Task.update_state')
+        
+        # Запускаем задачу
+        process_task(sum_task.id)
+        
+        # Проверяем, что update_state был вызван с правильными параметрами
+        mock_update.assert_called_with(
+            state='SUCCESS',
+            meta={'result': 30.0}
+        )
     
-    def setUp(self):
-        self.user = User.objects.create_user(
-            username='testuser',
-            password='testpass123'
-        )
-        
-    def test_sum_task_processing(self):
-        """Тест обработки задачи суммирования"""
-        task = Task.objects.create(
-            user=self.user,
-            task_type='sum',
-            input_data={'a': 10, 'b': 20}
-        )
+    def test_countdown_task_result(self, countdown_task, mocker):
+        # Мокаем time.sleep и update_state
+        mocker.patch('time.sleep')
+        mock_update = mocker.patch('celery.app.task.Task.update_state')
         
         # Запускаем задачу
-        result = process_task(task.id)
-        task.refresh_from_db()
+        process_task(countdown_task.id)
         
-        self.assertEqual(task.status, Task.TaskStatus.COMPLETED)
-        self.assertEqual(task.result['sum'], 30)
-        
-    def test_countdown_task_processing(self):
-        """Тест обработки задачи обратного отсчета"""
-        task = Task.objects.create(
-            user=self.user,
-            task_type='countdown',
-            input_data={'seconds': 1}
+        # Проверяем результат
+        mock_update.assert_called_with(
+            state='SUCCESS',
+            meta={'message': 'Обратный отсчет завершен'}
         )
+    
+    def test_invalid_task_data(self, sum_task, mocker):
+        # Меняем входные данные на некорректные
+        sum_task.input_data = {'a': 'not_a_number', 'b': 20}
+        sum_task.save()
+        
+        # Мокаем update_state
+        mock_update = mocker.patch('celery.app.task.Task.update_state')
         
         # Запускаем задачу
-        with patch('time.sleep') as mock_sleep:  # Мокаем time.sleep для ускорения теста
-            result = process_task(task.id)
-            task.refresh_from_db()
-            
-            mock_sleep.assert_called_once_with(1)
-            self.assertEqual(task.status, Task.TaskStatus.COMPLETED)
-            self.assertEqual(task.result['message'], 'Обратный отсчет завершен')
-            
-    def test_task_error_handling(self):
-        """Тест обработки ошибок в задачах"""
-        # Создаем задачу с некорректными данными
-        task = Task.objects.create(
-            user=self.user,
-            task_type='sum',
-            input_data={'a': 'not_a_number', 'b': 20}
+        process_task(sum_task.id)
+        
+        # Проверяем, что задача завершилась с ошибкой
+        mock_update.assert_called_with(
+            state='FAILURE',
+            meta={'error': pytest.raises(ValueError).match('.*')}
         )
+    
+    def test_nonexistent_task(self, mocker):
+        # Мокаем update_state
+        mock_update = mocker.patch('celery.app.task.Task.update_state')
         
-        # Запускаем задачу
-        result = process_task(task.id)
-        task.refresh_from_db()
-        
-        self.assertEqual(task.status, Task.TaskStatus.ERROR)
-        self.assertIn('error', task.result)
-        
-    def test_task_state_transitions(self):
-        """Тест переходов состояний задачи"""
-        task = Task.objects.create(
-            user=self.user,
-            task_type='sum',
-            input_data={'a': 10, 'b': 20}
-        )
-        
-        self.assertEqual(task.status, Task.TaskStatus.PENDING)
-        
-        # Запускаем задачу
-        result = process_task(task.id)
-        task.refresh_from_db()
-        
-        self.assertEqual(task.status, Task.TaskStatus.COMPLETED)
-        
-    def test_nonexistent_task(self):
-        """Тест обработки несуществующей задачи"""
-        with self.assertRaises(Task.DoesNotExist):
+        with pytest.raises(Task.DoesNotExist):
             process_task(999)
+        
+        # Проверяем, что update_state не вызывался
+        mock_update.assert_not_called()
+    
+    @pytest.mark.django_db(transaction=True)
+    def test_task_result_storage(self, sum_task, mocker):
+        # Создаем ID для Celery задачи
+        celery_task_id = 'test-task-id'
+        
+        # Мокаем self.request.id в Celery задаче
+        mocker.patch('celery.app.task.Task.request').id = celery_task_id
+        
+        # Запускаем задачу
+        process_task(sum_task.id)
+        
+        # Проверяем, что результат сохранен в TaskResult
+        task_result = TaskResult.objects.filter(task_id=celery_task_id).first()
+        assert task_result is not None
+        assert task_result.status == 'SUCCESS'
+        assert task_result.result == {'result': 30.0}

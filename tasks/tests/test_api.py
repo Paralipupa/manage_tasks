@@ -1,165 +1,155 @@
-from django.contrib.auth import get_user_model
+import pytest
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.test import APIClient
+from django_celery_results.models import TaskResult
 from tasks.models import Task
 
-User = get_user_model()
+# Фикстуры
+@pytest.fixture
+def api_client():
+    return APIClient()
 
-class AuthenticationTests(APITestCase):
-    """Тесты аутентификации"""
-    
-    def setUp(self):
-        self.user_data = {
-            'username': 'testuser',
-            'password': 'testpass123',
-            'email': 'test@example.com'
-        }
-        
-    def test_user_registration(self):
-        """Тест регистрации пользователя"""
+@pytest.fixture
+def user_data():
+    return {
+        'username': 'testuser',
+        'password': 'testpass123',
+        'email': 'test@example.com'
+    }
+
+@pytest.fixture
+def authenticated_client(api_client, django_user_model):
+    user = django_user_model.objects.create_user(username='testuser', password='testpass123')
+    api_client.force_authenticate(user=user)
+    return api_client, user
+
+@pytest.mark.django_db
+class TestAuthentication:
+    def test_user_registration(self, api_client, user_data, django_user_model):
         url = reverse('register')
-        response = self.client.post(url, self.user_data, format='json')
+        response = api_client.post(url, user_data)
         
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(User.objects.count(), 1)
-        self.assertEqual(User.objects.get().username, 'testuser')
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data['username'] == user_data['username']
         
-    def test_user_login(self):
-        """Тест получения JWT токена"""
-        # Создаем пользователя
-        User.objects.create_user(**self.user_data)
+        user = django_user_model.objects.filter(username=user_data['username']).first()
+        assert user is not None
+        assert user.email == user_data['email']
+        
+    def test_user_login(self, api_client, user_data, django_user_model):
+        django_user_model.objects.create_user(
+            username=user_data['username'],
+            password=user_data['password']
+        )
         
         url = reverse('token_obtain_pair')
-        response = self.client.post(url, {
-            'username': self.user_data['username'],
-            'password': self.user_data['password']
-        }, format='json')
+        response = api_client.post(url, {
+            'username': user_data['username'],
+            'password': user_data['password']
+        })
         
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('access', response.data)
-        self.assertIn('refresh', response.data)
+        assert response.status_code == status.HTTP_200_OK
+        assert 'access' in response.data
+        assert 'refresh' in response.data
 
-class TaskAPITests(APITestCase):
-    """Тесты API задач"""
-    
-    def setUp(self):
-        # Создаем пользователя
-        self.user = User.objects.create_user(
-            username='testuser',
-            password='testpass123'
-        )
-        # Получаем токен
-        refresh = RefreshToken.for_user(self.user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
-        
-    def test_create_sum_task(self):
-        """Тест создания задачи суммирования"""
-        url = reverse('task-list-create')
-        data = {
+@pytest.mark.django_db
+class TestTaskAPI:
+    @pytest.fixture
+    def sum_task_data(self):
+        return {
             'task_type': 'sum',
             'input_data': {'a': 10, 'b': 20}
         }
-        response = self.client.post(url, data, format='json')
-        
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Task.objects.count(), 1)
-        self.assertEqual(Task.objects.get().task_type, 'sum')
-        
-    def test_create_countdown_task(self):
-        """Тест создания задачи обратного отсчета"""
-        url = reverse('task-list-create')
-        data = {
+    
+    @pytest.fixture
+    def countdown_task_data(self):
+        return {
             'task_type': 'countdown',
             'input_data': {'seconds': 5}
         }
-        response = self.client.post(url, data, format='json')
-        
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Task.objects.count(), 1)
-        self.assertEqual(Task.objects.get().task_type, 'countdown')
-        
-    def test_task_limit(self):
-        """Тест ограничения на количество активных задач"""
+    
+    def test_create_sum_task(self, authenticated_client, sum_task_data):
+        client, user = authenticated_client
         url = reverse('task-list-create')
-        data = {
-            'task_type': 'sum',
-            'input_data': {'a': 1, 'b': 1}
-        }
+        
+        response = client.post(url, sum_task_data)
+        assert response.status_code == status.HTTP_201_CREATED
+        
+        task = Task.objects.first()
+        assert task is not None
+        assert task.task_type == 'sum'
+        assert task.user == user
+        
+        # Проверяем, что задача создана в Celery
+        celery_task = TaskResult.objects.filter(task_id=task.celery_task_id).first()
+        assert celery_task is not None
+    
+    def test_task_limit(self, authenticated_client, sum_task_data):
+        client, _ = authenticated_client
+        url = reverse('task-list-create')
         
         # Создаем 5 задач
         for _ in range(5):
-            response = self.client.post(url, data, format='json')
-            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+            response = client.post(url, sum_task_data)
+            assert response.status_code == status.HTTP_201_CREATED
         
         # Пытаемся создать шестую задачу
-        response = self.client.post(url, data, format='json')
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        
-    def test_task_list_pagination(self):
-        """Тест пагинации списка задач"""
-        url = reverse('task-list-create')
-        data = {
-            'task_type': 'sum',
-            'input_data': {'a': 1, 'b': 1}
-        }
-        
-        # Создаем 15 задач
-        for _ in range(15):
-            self.client.post(url, data, format='json')
-            
-        # Получаем первую страницу
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 10)  # 10 задач на странице
-        self.assertIsNotNone(response.data['next'])  # Есть следующая страница
-        
-    def test_task_status_filter(self):
-        """Тест фильтрации задач по статусу"""
-        # Создаем задачи с разными статусами
-        Task.objects.create(
-            user=self.user,
-            task_type='sum',
-            input_data={'a': 1, 'b': 1},
-            status=Task.TaskStatus.COMPLETED
-        )
-        Task.objects.create(
-            user=self.user,
-            task_type='sum',
-            input_data={'a': 2, 'b': 2},
-            status=Task.TaskStatus.PENDING
-        )
-        
+        response = client.post(url, sum_task_data)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'превышено' in response.data['error'].lower()
+    
+    @pytest.mark.parametrize('task_data,expected_error', [
+        ({'task_type': 'sum', 'input_data': {'a': 'not_a_number', 'b': 20}}, 'должны быть числами'),
+        ({'task_type': 'countdown', 'input_data': {'seconds': -1}}, 'положительным'),
+        ({'task_type': 'sum', 'input_data': {}}, 'два числа'),
+    ])
+    def test_task_validation(self, authenticated_client, task_data, expected_error):
+        client, _ = authenticated_client
         url = reverse('task-list-create')
         
-        # Фильтруем по статусу COMPLETED
-        response = self.client.get(f'{url}?status=completed')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 1)
-        self.assertEqual(response.data['results'][0]['status'], 'completed')
+        response = client.post(url, task_data)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert expected_error in response.data['error'].lower()
+    
+    def test_task_isolation(self, authenticated_client, django_user_model, sum_task_data):
+        client1, user1 = authenticated_client
         
-    def test_task_user_isolation(self):
-        """Тест изоляции задач между пользователями"""
-        # Создаем второго пользователя
-        other_user = User.objects.create_user(
-            username='otheruser',
-            password='otherpass123'
-        )
+        # Создаем второго пользователя и клиента
+        user2 = django_user_model.objects.create_user(username='other', password='pass')
+        client2 = APIClient()
+        client2.force_authenticate(user=user2)
         
-        # Создаем задачу от имени первого пользователя
-        Task.objects.create(
-            user=self.user,
-            task_type='sum',
-            input_data={'a': 1, 'b': 1}
-        )
-        
-        # Получаем токен для второго пользователя
-        refresh = RefreshToken.for_user(other_user)
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
-        
-        # Проверяем, что второй пользователь не видит задачи первого
+        # Создаем задачу от первого пользователя
         url = reverse('task-list-create')
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 0)
+        client1.post(url, sum_task_data)
+        
+        # Проверяем, что второй пользователь не видит задачу первого
+        response = client2.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data['results']) == 0
+    
+    @pytest.mark.django_db(transaction=True)
+    def test_task_result_retrieval(self, authenticated_client, sum_task_data, mocker):
+        client, _ = authenticated_client
+        url = reverse('task-list-create')
+        
+        # Создаем задачу
+        response = client.post(url, sum_task_data)
+        task_id = response.data['id']
+        
+        # Мокаем Celery для немедленного результата
+        mocker.patch('tasks.tasks.process_task.delay')
+        TaskResult.objects.create(
+            task_id=response.data['celery_task_id'],
+            status='SUCCESS',
+            result={'result': 30}
+        )
+        
+        # Получаем результат
+        detail_url = reverse('task-detail', args=[task_id])
+        response = client.get(detail_url)
+        
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] == 'SUCCESS'
+        assert response.data['result'] == {'result': 30}

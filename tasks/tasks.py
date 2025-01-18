@@ -1,35 +1,28 @@
 import time
-import logging
+import json
 from celery import shared_task
-from .models import Task
 
-logger = logging.getLogger(__name__)
-
-@shared_task
-def process_task(task_id):
-    logger.info(f"Starting task {task_id}")
+@shared_task(bind=True)
+def process_task(self, task_id):
+    """
+    Celery задача для обработки асинхронных операций.
+    Результат и статус сохраняются в django_celery_results автоматически.
+    """
+    from .models import Task  # Импорт здесь во избежание циклических импортов
+    
+    task = Task.objects.get(id=task_id)
+    
     try:
-        task = Task.objects.get(id=task_id)
-        
-        task.status = Task.TaskStatus.RUNNING
-        task.save()
-
         if task.task_type == Task.TaskType.SUM:
             result = float(task.input_data['a']) + float(task.input_data['b'])
-            task.result = {'sum': result}
+            # Сохраняем результат в формате, который можно сериализовать
+            self.update_state(state='SUCCESS', meta={'result': result})
             
         elif task.task_type == Task.TaskType.COUNTDOWN:
             seconds = int(task.input_data['seconds'])
             time.sleep(seconds)
-            task.result = {'message': 'Обратный отсчет завершен'}
+            self.update_state(state='SUCCESS', meta={'message': 'Обратный отсчет завершен'})
             
-        task.status = Task.TaskStatus.COMPLETED
-        
     except Exception as e:
-        task.status = Task.TaskStatus.ERROR
-        task.result = {'error': str(e)}
-        
-    finally:
-        task.save()
-        
-    return task.result 
+        # В случае ошибки Celery сам обновит статус
+        self.update_state(state='FAILURE', meta={'error': str(e)}) 

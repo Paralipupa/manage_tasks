@@ -1,22 +1,10 @@
 from django.db import models
 from django.contrib.auth import get_user_model
-from django.utils import timezone
-import pytz
+from django_celery_results.models import TASK_STATE_CHOICES
 
 User = get_user_model()
 
-def get_moscow_time():
-    """Возвращает текущее московское время"""
-    moscow_tz = pytz.timezone('Europe/Moscow')
-    return timezone.now().astimezone(moscow_tz).replace(tzinfo=None)
-
 class Task(models.Model):
-    class TaskStatus(models.TextChoices):
-        PENDING = 'pending', 'Запланировано'
-        RUNNING = 'running', 'Выполняется'
-        COMPLETED = 'completed', 'Выполнено'
-        ERROR = 'error', 'Ошибка'
-
     class TaskType(models.TextChoices):
         SUM = 'sum', 'Сумма двух чисел'
         COUNTDOWN = 'countdown', 'Обратный отсчет'
@@ -32,11 +20,13 @@ class Task(models.Model):
         choices=TaskType.choices,
         verbose_name='Тип задачи'
     )
-    input_data = models.JSONField(verbose_name='Входные данные')
+    input_data = models.JSONField(
+        verbose_name='Входные данные'
+    )
     status = models.CharField(
-        max_length=20,
-        choices=TaskStatus.choices,
-        default=TaskStatus.PENDING,
+        max_length=50,
+        choices=TASK_STATE_CHOICES,
+        default='PENDING',
         verbose_name='Статус'
     )
     result = models.JSONField(
@@ -48,7 +38,6 @@ class Task(models.Model):
         auto_now_add=True,
         verbose_name='Дата создания'
     )
-
 
     class Meta:
         verbose_name = 'Задача'

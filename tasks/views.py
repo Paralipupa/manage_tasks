@@ -1,20 +1,41 @@
-from django.db.models import Q
+from django.contrib.auth import get_user_model
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django_filters import rest_framework as filters
+from django_celery_results.models import TaskResult
 from .models import Task
 from .serializers import UserSerializer, TaskSerializer
 from .tasks import process_task
-from django.utils import timezone
-import pytz
+
+User = get_user_model()
 
 class UserCreateView(generics.CreateAPIView):
-    serializer_class = UserSerializer
     permission_classes = [AllowAny]
+    serializer_class = UserSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        user = User.objects.create_user(
+            username=serializer.validated_data['username'],
+            email=serializer.validated_data.get('email', ''),
+            password=serializer.validated_data['password']
+        )
+        
+        return Response(
+            {'id': user.id, 'username': user.username},
+            status=status.HTTP_201_CREATED
+        )
 
 class TaskFilter(filters.FilterSet):
-    status = filters.ChoiceFilter(choices=Task.TaskStatus.choices)
+    status = filters.ChoiceFilter(choices=[
+        ('PENDING', 'Ожидает'),
+        ('STARTED', 'Выполняется'),
+        ('SUCCESS', 'Выполнено'),
+        ('FAILURE', 'Ошибка'),
+    ])
     
     class Meta:
         model = Task
@@ -28,11 +49,31 @@ class TaskListCreateView(generics.ListCreateAPIView):
     def get_queryset(self):
         return Task.objects.filter(user=self.request.user)
     
+    def validate_input_data(self, task_type, input_data):
+        if task_type == Task.TaskType.SUM:
+            if not isinstance(input_data, dict) or 'a' not in input_data or 'b' not in input_data:
+                raise ValueError('Для задачи суммирования необходимо указать два числа: "a" и "b"')
+            try:
+                float(input_data['a'])
+                float(input_data['b'])
+            except (TypeError, ValueError):
+                raise ValueError('Значения должны быть числами')
+                
+        elif task_type == Task.TaskType.COUNTDOWN:
+            if not isinstance(input_data, dict) or 'seconds' not in input_data:
+                raise ValueError('Для обратного отсчета необходимо указать количество секунд')
+            try:
+                seconds = int(input_data['seconds'])
+                if seconds <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                raise ValueError('Количество секунд должно быть положительным целым числом')
+    
     def create(self, request, *args, **kwargs):
         # Проверяем количество активных задач пользователя
         active_tasks = Task.objects.filter(
             user=request.user,
-            status__in=[Task.TaskStatus.PENDING, Task.TaskStatus.RUNNING]
+            celery_task__status__in=['PENDING', 'STARTED']
         ).count()
         
         if active_tasks >= 5:
@@ -41,64 +82,37 @@ class TaskListCreateView(generics.ListCreateAPIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Получаем scheduled_at из запроса, если есть
-        scheduled_at = request.data.get('scheduled_at')
-        
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        task = serializer.save()
         
-        # Запускаем задачу асинхронно с учетом запланированного времени
         try:
-            if scheduled_at:
-                from dateutil import parser
-                from datetime import datetime
-                import pytz
-                
-                # Парсим время
-                eta = parser.parse(scheduled_at)
-                if eta.tzinfo is not None:
-                    raise ValueError('Время должно быть без указания временной зоны')
-                
-                # Проверяем время относительно текущего московского
-                moscow_tz = pytz.timezone('Europe/Moscow')
-                now = datetime.now(moscow_tz).replace(tzinfo=None)
-                
-                if eta < now:
-                    return Response(
-                        {'error': 'Запланированное время не может быть в прошлом'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Сохраняем время в базе как московское (без временной зоны)
-                task.scheduled_at = eta
-                task.save()
-                
-                # Для Celery добавляем временную зону к времени
-                eta_with_tz = moscow_tz.localize(eta)
-                process_task.apply_async(args=[task.id], eta=eta_with_tz)
-            else:
-                # Если время не указано, выполняем сразу
-                process_task.delay(task.id)
+            self.validate_input_data(
+                serializer.validated_data['task_type'],
+                serializer.validated_data['input_data']
+            )
             
-        except (ValueError, TypeError) as e:
+            # Создаем задачу
+            task = Task.objects.create(
+                user=request.user,
+                task_type=serializer.validated_data['task_type'],
+                input_data=serializer.validated_data['input_data']
+            )
+            
+            # Запускаем Celery задачу и сохраняем её ID
+            celery_task = process_task.delay(task.id)
+            task.celery_task_id = celery_task.id
+            task.save()
+            
             return Response(
-                {'error': str(e) if 'временной зоны' in str(e) else 'Неверный формат времени. Используйте формат "YYYY-MM-DD HH:MM:SS"'},
+                TaskSerializer(task).data,
+                status=status.HTTP_201_CREATED
+            )
+            
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        headers = self.get_success_headers(serializer.data)
-        response_data = serializer.data
-        if scheduled_at:
-            response_data['scheduled_at'] = eta.strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            response_data['scheduled_at'] = None
-        
-        return Response(
-            response_data,
-            status=status.HTTP_201_CREATED,
-            headers=headers
-        )
 
 class TaskDetailView(generics.RetrieveAPIView):
     serializer_class = TaskSerializer
@@ -106,3 +120,18 @@ class TaskDetailView(generics.RetrieveAPIView):
     
     def get_queryset(self):
         return Task.objects.filter(user=self.request.user)
+    
+    def retrieve(self, request, *args, **kwargs):
+        task = self.get_object()
+        
+        # Получаем актуальный статус и результат из Celery
+        try:
+            celery_result = TaskResult.objects.get(task_id=task.celery_task_id)
+            task.status = celery_result.status
+            task.result = celery_result.result
+            task.save()
+        except TaskResult.DoesNotExist:
+            pass
+        
+        serializer = self.get_serializer(task)
+        return Response(serializer.data)
