@@ -5,10 +5,12 @@ from django_celery_results.models import TASK_STATE_CHOICES
 User = get_user_model()
 
 class Task(models.Model):
+    """Модель для хранения информации о задачах"""
+    
     class TaskType(models.TextChoices):
-        SUM = 'sum', 'Сумма двух чисел'
+        SUM = 'sum', 'Сумма чисел'
         COUNTDOWN = 'countdown', 'Обратный отсчет'
-
+    
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -38,11 +40,11 @@ class Task(models.Model):
         auto_now_add=True,
         verbose_name='Дата создания'
     )
-
+    
     class Meta:
         verbose_name = 'Задача'
         verbose_name_plural = 'Задачи'
         ordering = ['-created_at']
-
+    
     def __str__(self):
-        return f'{self.task_type} - {self.status} ({self.user.username})'
+        return f'{self.get_task_type_display()} - {self.status} ({self.user.username})'
