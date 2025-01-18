@@ -2,14 +2,16 @@ version: '3.8'
 
 services:
   web:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile-develop
     command: >
-      sh -c "python manage.py migrate &&
-             python manage.py runserver 0.0.0.0:8000"
+      sh -c "python -m debugpy --listen 0.0.0.0:8001 manage.py runserver 0.0.0.0:8000"
     volumes:
       - .:/app
     ports:
       - "8000:8000"
+      - "8001:8001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -23,6 +25,10 @@ services:
       - DB_HOST=postgres
       - DB_PORT=5432
       - REDIS_URL=redis://redis:6379/0
+      - DEBUGPY_HOST=0.0.0.0
+      - DEBUGPY_PORT=8001
+      - DEBUG = True
+
 
   postgres:
     image: postgres:15-alpine
@@ -52,7 +58,7 @@ services:
 
   celery:
     build: .
-    command: celery -A config worker -l INFO
+    command: python -m debugpy --listen 0.0.0.0:8002 celery -A config worker -l INFO
     volumes:
       - .:/app
     depends_on:
@@ -60,6 +66,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    ports:
+      - "8002:8002"
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings
       - DB_NAME=task_manager
