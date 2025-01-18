@@ -5,8 +5,10 @@ from rest_framework.response import Response
 from django_filters import rest_framework as filters
 from django_celery_results.models import TaskResult
 from .models import Task
+from celery.result import AsyncResult
 from .serializers import UserSerializer, TaskSerializer
 from .tasks import process_task
+import pytz
 
 User = get_user_model()
 
@@ -47,9 +49,11 @@ class TaskListCreateView(generics.ListCreateAPIView):
     filterset_class = TaskFilter
     
     def get_queryset(self):
+        """Получение списка задач текущего пользователя"""
         return Task.objects.filter(user=self.request.user)
     
     def validate_input_data(self, task_type, input_data):
+        """Валидация входных данных в зависимости от типа задачи"""
         if task_type == Task.TaskType.SUM:
             if not isinstance(input_data, dict) or 'a' not in input_data or 'b' not in input_data:
                 raise ValueError('Для задачи суммирования необходимо указать два числа: "a" и "b"')
@@ -70,10 +74,11 @@ class TaskListCreateView(generics.ListCreateAPIView):
                 raise ValueError('Количество секунд должно быть положительным целым числом')
     
     def create(self, request, *args, **kwargs):
+        """Создание новой задачи"""
         # Проверяем количество активных задач пользователя
         active_tasks = Task.objects.filter(
             user=request.user,
-            celery_task__status__in=['PENDING', 'STARTED']
+            status__in=['PENDING', 'STARTED']
         ).count()
         
         if active_tasks >= 5:
@@ -98,9 +103,47 @@ class TaskListCreateView(generics.ListCreateAPIView):
                 input_data=serializer.validated_data['input_data']
             )
             
-            # Запускаем Celery задачу и сохраняем её ID
-            celery_task = process_task.delay(task.id)
-            task.celery_task_id = celery_task.id
+            # Получаем время запланированного выполнения из запроса
+            scheduled_at = request.data.get('scheduled_at')
+            
+            # Запускаем Celery задачу
+            if scheduled_at:
+                from django.utils.dateparse import parse_datetime
+                from django.utils import timezone
+                
+                # Получаем московский часовой пояс
+                moscow_tz = pytz.timezone('Europe/Moscow')
+                
+                # Парсим время выполнения
+                eta = parse_datetime(scheduled_at)
+                if eta is None:
+                    return Response(
+                        {'error': 'Неверный формат времени. Используйте формат "YYYY-MM-DD HH:MM:SS"'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Если дата без часового пояса, считаем её в московском времени
+                if timezone.is_naive(eta):
+                    eta = moscow_tz.localize(eta)
+                
+                # Проверяем, что время в будущем
+                now = timezone.now().astimezone(moscow_tz)
+                if eta <= now:
+                    return Response(
+                        {'error': 'Время выполнения задачи не может быть в прошлом'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Запускаем задачу с отложенным выполнением
+                celery_task = process_task.apply_async((task.id,), eta=eta)
+            else:
+                # Запускаем задачу немедленно
+                celery_task = process_task.delay(task.id)
+            
+            # Обновляем статус и результат задачи
+            result = AsyncResult(celery_task.id)
+            task.status = result.status
+            task.result = result.result
             task.save()
             
             return Response(
@@ -119,19 +162,11 @@ class TaskDetailView(generics.RetrieveAPIView):
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
+        """Получение задач текущего пользователя"""
         return Task.objects.filter(user=self.request.user)
     
     def retrieve(self, request, *args, **kwargs):
+        """Получение информации о конкретной задаче"""
         task = self.get_object()
-        
-        # Получаем актуальный статус и результат из Celery
-        try:
-            celery_result = TaskResult.objects.get(task_id=task.celery_task_id)
-            task.status = celery_result.status
-            task.result = celery_result.result
-            task.save()
-        except TaskResult.DoesNotExist:
-            pass
-        
         serializer = self.get_serializer(task)
         return Response(serializer.data)

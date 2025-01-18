@@ -1,28 +1,76 @@
 import time
-import json
 from celery import shared_task
+import json
 
 @shared_task(bind=True)
-def process_task(self, task_id):
+def process_task(task_instance, task_id):
     """
     Celery задача для обработки асинхронных операций.
-    Результат и статус сохраняются в django_celery_results автоматически.
+    
+    Args:
+        task_instance: Экземпляр задачи Celery
+        task_id: ID задачи в базе данных Django
     """
     from .models import Task  # Импорт здесь во избежание циклических импортов
     
-    task = Task.objects.get(id=task_id)
+    # Получаем задачу из базы данных
+    django_task = Task.objects.get(id=task_id)
+    
+    def update_task_state(state, meta=None):
+        """Обновляет состояние как в Celery, так и в Django"""
+        task_instance.update_state(state=state, meta=meta)
+        django_task.status = state
+        if meta:
+            django_task.result = meta
+        django_task.save()
     
     try:
-        if task.task_type == Task.TaskType.SUM:
-            result = float(task.input_data['a']) + float(task.input_data['b'])
-            # Сохраняем результат в формате, который можно сериализовать
-            self.update_state(state='SUCCESS', meta={'result': result})
+        # Отмечаем, что задача начала выполняться
+        update_task_state('STARTED')
+        
+        if django_task.task_type == Task.TaskType.SUM:
+            # Задача суммирования чисел
+            a = float(django_task.input_data['a'])
+            b = float(django_task.input_data['b'])
+            result = a + b
             
-        elif task.task_type == Task.TaskType.COUNTDOWN:
-            seconds = int(task.input_data['seconds'])
-            time.sleep(seconds)
-            self.update_state(state='SUCCESS', meta={'message': 'Обратный отсчет завершен'})
+            # Сохраняем результат
+            update_task_state(
+                'SUCCESS',
+                {
+                    'result': result,
+                    'message': f'Сумма чисел {a} и {b} равна {result}'
+                }
+            )
+            
+        elif django_task.task_type == Task.TaskType.COUNTDOWN:
+            # Задача обратного отсчета
+            seconds = int(django_task.input_data['seconds'])
+            
+            # Обновляем состояние каждую секунду
+            for remaining in range(seconds, 0, -1):
+                update_task_state(
+                    'STARTED',
+                    {
+                        'remaining': remaining,
+                        'message': f'Осталось {remaining} сек.'
+                    }
+                )
+                time.sleep(1)
+            
+            # Задача завершена
+            update_task_state(
+                'SUCCESS',
+                {
+                    'message': 'Обратный отсчет завершен'
+                }
+            )
             
     except Exception as e:
-        # В случае ошибки Celery сам обновит статус
-        self.update_state(state='FAILURE', meta={'error': str(e)}) 
+        # В случае ошибки сохраняем информацию об ошибке
+        error_info = {
+            'error': str(e),
+            'error_type': type(e).__name__
+        }
+        update_task_state('FAILURE', error_info)
+        raise  # Перебрасываем исключение, чтобы Celery отметил задачу как проваленную 
