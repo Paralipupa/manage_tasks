@@ -6,6 +6,8 @@ from django_filters import rest_framework as filters
 from .models import Task
 from .serializers import UserSerializer, TaskSerializer
 from .tasks import process_task
+from django.utils import timezone
+import pytz
 
 class UserCreateView(generics.CreateAPIView):
     serializer_class = UserSerializer
@@ -38,17 +40,55 @@ class TaskListCreateView(generics.ListCreateAPIView):
                 {'error': 'Превышено максимальное количество активных задач (5)'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-            
+        
+        # Получаем scheduled_at из запроса, если есть
+        scheduled_at = request.data.get('scheduled_at')
+        
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         task = serializer.save()
         
-        # Запускаем задачу асинхронно
-        process_task.delay(task.id)
+        # Запускаем задачу асинхронно с учетом запланированного времени
+        try:
+            if scheduled_at:
+                from dateutil import parser
+                # Парсим время и устанавливаем московскую временную зону
+                moscow_tz = pytz.timezone('Europe/Moscow')
+                eta = parser.parse(scheduled_at)
+                
+                # Если время наивное (без временной зоны), считаем его московским
+                if eta.tzinfo is None:
+                    eta = moscow_tz.localize(eta)
+                # Если время в другой временной зоне, конвертируем в московское
+                else:
+                    eta = eta.astimezone(moscow_tz)
+                
+                now = timezone.now().astimezone(moscow_tz)
+                if eta < now:
+                    return Response(
+                        {'error': 'Запланированное время не может быть в прошлом (используется московское время)'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                eta = None
+                
+            process_task.apply_async(args=[task.id], eta=eta)
+            
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'Неверный формат времени. Используйте формат "YYYY-MM-DD HH:MM:SS" (московское время)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         headers = self.get_success_headers(serializer.data)
+        response_data = serializer.data
+        if eta:
+            response_data['scheduled_at'] = eta.isoformat()
+        else:
+            response_data['scheduled_at'] = None
+        
         return Response(
-            serializer.data,
+            response_data,
             status=status.HTTP_201_CREATED,
             headers=headers
         )
