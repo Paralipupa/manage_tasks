@@ -10,6 +10,7 @@ class TaskAdmin(admin.ModelAdmin):
         'user',
         'task_type',
         'status',
+        'result',
         'created_at',
     )
     list_filter = ('task_type', 'status', 'created_at')

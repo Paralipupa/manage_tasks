@@ -1,50 +1,61 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from django_celery_results.models import TASK_STATE_CHOICES
+from django.db.models import QuerySet
+from .taskstatus import TaskStatus
+from .tasks import TaskProcessor
 
 User = get_user_model()
 
+
 class Task(models.Model):
     """Модель для хранения информации о задачах"""
-    
+
     class TaskType(models.TextChoices):
-        SUM = 'sum', 'Сумма чисел'
-        COUNTDOWN = 'countdown', 'Обратный отсчет'
-    
+        """Типы задач, соответствующие процессорам в TaskProcessor"""
+        SUM = "sum", "Сумма чисел"
+        COUNTDOWN = "countdown", "Обратный отсчет"
+
+        @classmethod
+        def get_choices(cls):
+            """Получить список доступных типов задач из процессора"""
+            return [(key, key.title()) for key in TaskProcessor.processors.keys()]
+
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
-        related_name='tasks',
-        verbose_name='Пользователь'
+        related_name="tasks",
+        verbose_name="Пользователь",
     )
     task_type = models.CharField(
         max_length=20,
-        choices=TaskType.choices,
-        verbose_name='Тип задачи'
+        choices=TaskType.get_choices(),
+        verbose_name="Тип задачи"
     )
-    input_data = models.JSONField(
-        verbose_name='Входные данные'
-    )
+    input_data = models.JSONField(verbose_name="Входные данные")
     status = models.CharField(
         max_length=50,
         choices=TASK_STATE_CHOICES,
-        default='PENDING',
-        verbose_name='Статус'
+        default="PENDING",
+        verbose_name="Статус",
     )
-    result = models.JSONField(
-        null=True,
-        blank=True,
-        verbose_name='Результат'
-    )
-    created_at = models.DateTimeField(
-        auto_now_add=True,
-        verbose_name='Дата создания'
-    )
-    
+    result = models.JSONField(null=True, blank=True, verbose_name="Результат")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
+
     class Meta:
-        verbose_name = 'Задача'
-        verbose_name_plural = 'Задачи'
-        ordering = ['-created_at']
-    
+        verbose_name = "Задача"
+        verbose_name_plural = "Задачи"
+        ordering = ["-created_at"]
+
     def __str__(self) -> str:
-        return f'{self.get_task_type_display()} - {self.status} ({self.user.username})'
+        return f"{self.get_task_type_display()} - {self.status} ({self.user.username})"
+
+    @staticmethod
+    def get_active_tasks(user) -> QuerySet:
+        return Task.objects.filter(
+            user=user,
+            status__in=[
+                TaskStatus.PENDING.value,
+                TaskStatus.STARTED.value,
+            ],
+        )

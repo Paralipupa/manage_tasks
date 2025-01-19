@@ -33,14 +33,6 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = ['*']
 
-
-TASK_STATUS = [
-        ('PENDING', 'Ожидает'),
-        ('STARTED', 'Выполняется'),
-        ('SUCCESS', 'Выполнено'),
-        ('FAILURE', 'Ошибка'),
-    ]
-
 # Application definition
 
 INSTALLED_APPS = [
