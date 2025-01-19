@@ -35,7 +35,7 @@ def process_task(self,task_id):
             
             # Сохраняем результат
             update_task_state(
-                "COMPLETED",
+                "SUCCESS",
                 {
                     'result': result,
                     'message': f'Сумма чисел {a} и {b} равна {result}'

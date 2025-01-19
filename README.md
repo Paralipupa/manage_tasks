@@ -27,7 +27,7 @@ cd <project-directory>
 
 3. Запустите проект:
 ```bash
-docker-compose -f docker-compose-develop.yml up --build
+docker-compose up --build
 ```
 
 Приложение будет доступно по адресу: http://localhost:8000
@@ -104,7 +104,7 @@ docker-compose -f docker-compose-develop.yml up --build
 ## Статусы задач
 
 - `pending` - задача создана и ожидает выполнения
-- `running` - задача выполняется
+- `started` - задача выполняется
 - `completed` - задача успешно завершена
 - `error` - произошла ошибка при выполнении задачи
 

@@ -1,7 +1,5 @@
 from django.db import models
 from django.contrib.auth import get_user_model
-from django.db.models import QuerySet
-from typing import Any
 from django_celery_results.models import TASK_STATE_CHOICES
 
 User = get_user_model()

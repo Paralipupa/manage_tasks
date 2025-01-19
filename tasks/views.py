@@ -1,7 +1,6 @@
 from django.contrib.auth import get_user_model
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.request import Request
 from rest_framework.response import Response
 from django_filters import rest_framework as filters
 from django_celery_results.models import TaskResult
@@ -11,8 +10,6 @@ from .serializers import UserSerializer, TaskSerializer
 from .tasks import process_task
 from .helpers import get_moscow_time
 from django.conf import settings
-from typing import Any, Dict
-from django.db.models import QuerySet
 User = get_user_model()
 
 class UserCreateView(generics.CreateAPIView):
@@ -46,7 +43,7 @@ class TaskListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     filterset_class = TaskFilter
     
-    def get_queryset(self) -> QuerySet[Task]:
+    def get_queryset(self):
         """Получение списка задач текущего пользователя"""
         return Task.objects.filter(user=self.request.user)
     
@@ -116,7 +113,7 @@ class TaskListCreateView(generics.ListCreateAPIView):
                 # Запускаем задачу немедленно
                 celery_task = process_task.delay(task.id)
             
-            task.status = "STARTED"
+            task.status = AsyncResult(celery_task.id).status
             task.result = celery_task.id
             task.save()
 
@@ -136,7 +133,7 @@ class TaskDetailView(generics.RetrieveAPIView):
     serializer_class = TaskSerializer
     permission_classes = [IsAuthenticated]
     
-    def get_queryset(self) -> QuerySet[Task]:
+    def get_queryset(self):
         """Получение задач текущего пользователя"""
         return Task.objects.filter(user=self.request.user)
     
@@ -144,7 +141,7 @@ class TaskDetailView(generics.RetrieveAPIView):
         """Получение информации о конкретной задаче"""
         task = self.get_object()
         serializer = self.get_serializer(task)
-        if serializer.data['status'] == "COMPLETED":
+        if serializer.data['status'] == "SUCCES":
             return Response(serializer.data)
         status = AsyncResult(serializer.data['result']).status
         result = serializer.data.copy()
