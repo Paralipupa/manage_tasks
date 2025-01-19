@@ -1,14 +1,15 @@
 import time
 from celery import shared_task
 import json
-
+from celery.result import AsyncResult
+from rest_framework import generics, status
 @shared_task(bind=True)
-def process_task(task_instance, task_id):
+def process_task(self,task_id):
     """
     Celery задача для обработки асинхронных операций.
     
     Args:
-        task_instance: Экземпляр задачи Celery
+        
         task_id: ID задачи в базе данных Django
     """
     from .models import Task  # Импорт здесь во избежание циклических импортов
@@ -18,16 +19,14 @@ def process_task(task_instance, task_id):
     
     def update_task_state(state, meta=None):
         """Обновляет состояние как в Celery, так и в Django"""
-        task_instance.update_state(state=state, meta=meta)
+        # task_instance.update_state(state=state, meta=meta)
         django_task.status = state
         if meta:
             django_task.result = meta
         django_task.save()
     
     try:
-        # Отмечаем, что задача начала выполняться
-        update_task_state('STARTED')
-        
+
         if django_task.task_type == Task.TaskType.SUM:
             # Задача суммирования чисел
             a = float(django_task.input_data['a'])
@@ -36,7 +35,7 @@ def process_task(task_instance, task_id):
             
             # Сохраняем результат
             update_task_state(
-                'SUCCESS',
+                "COMPLETED",
                 {
                     'result': result,
                     'message': f'Сумма чисел {a} и {b} равна {result}'
@@ -48,15 +47,7 @@ def process_task(task_instance, task_id):
             seconds = int(django_task.input_data['seconds'])
             
             # Обновляем состояние каждую секунду
-            for remaining in range(seconds, 0, -1):
-                update_task_state(
-                    'STARTED',
-                    {
-                        'remaining': remaining,
-                        'message': f'Осталось {remaining} сек.'
-                    }
-                )
-                time.sleep(1)
+            time.sleep(seconds)
             
             # Задача завершена
             update_task_state(

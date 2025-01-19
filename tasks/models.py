@@ -1,5 +1,7 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.db.models import QuerySet
+from typing import Any
 from django_celery_results.models import TASK_STATE_CHOICES
 
 User = get_user_model()
@@ -46,5 +48,5 @@ class Task(models.Model):
         verbose_name_plural = 'Задачи'
         ordering = ['-created_at']
     
-    def __str__(self):
+    def __str__(self) -> str:
         return f'{self.get_task_type_display()} - {self.status} ({self.user.username})'
