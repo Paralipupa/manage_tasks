@@ -74,6 +74,11 @@ def task_post_save(sender, instance, created, **kwargs):
                 instance.status = celery_task.status
                 instance.result = celery_task.id
                 instance.save(update_fields=['status', 'result'])
+            else:
+                # Сохраняем ошибку даты
+                instance.status = TaskStatus.FAILURE.value
+                instance.result = eta
+                instance.save(update_fields=['status', 'result'])
         else:
             # Запускаем задачу немедленно
             celery_task = process_task.delay(instance.id)

@@ -17,10 +17,10 @@ class TaskProcessor:
     def process_sum(input_data: dict[str, Union[int, float]]) -> dict[str, Any]:
         """Обработка задачи суммирования"""
         try:
-            result = sum(input_data.values())
+            result = sum(input_data["values"])
             return {
                 "result": result,
-                "message": f'Сумма чисел {",".join(str(x) for x in input_data.values())} равна {result}',
+                "message": f'Сумма чисел {",".join(str(x) for x in input_data["values"])} равна {result}',
             }
         except (TypeError, ValueError) as e:
             raise ValueError(f"Invalid input data for sum task: {str(e)}")

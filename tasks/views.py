@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from django_filters import rest_framework as filters
 from django_celery_results.models import TaskResult
+from contextlib import suppress
 from .models import Task
 from celery.result import AsyncResult
 from .serializers import UserSerializer, TaskSerializer
@@ -102,5 +103,12 @@ class TaskDetailView(generics.RetrieveAPIView):
             return Response(serializer.data)
         proc = AsyncResult(serializer.data["result"])
         result = serializer.data.copy()
-        result["status"] = proc.status
+        try:
+            result["status"] = proc.status
+        except Exception as e:
+            # если статус не равен failure, то устанавливаем его и сохраняем ошибку
+            if result["status"] != TaskStatus.FAILURE.value:
+                result["status"] = TaskStatus.FAILURE.value
+                result["result"] = str(e)
         return Response(result)
+
