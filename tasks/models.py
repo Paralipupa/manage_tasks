@@ -3,23 +3,13 @@ from django.contrib.auth import get_user_model
 from django_celery_results.models import TASK_STATE_CHOICES
 from django.db.models import QuerySet
 from .taskstatus import TaskStatus
-from .tasks import TaskProcessor
+from .taskprocessor import TaskProcessor, TaskType
 
 User = get_user_model()
 
 
 class Task(models.Model):
     """Модель для хранения информации о задачах"""
-
-    class TaskType(models.TextChoices):
-        """Типы задач, соответствующие процессорам в TaskProcessor"""
-        SUM = "sum", "Сумма чисел"
-        COUNTDOWN = "countdown", "Обратный отсчет"
-
-        @classmethod
-        def get_choices(cls):
-            """Получить список доступных типов задач из процессора"""
-            return [(key, key.title()) for key in TaskProcessor.processors.keys()]
 
     user = models.ForeignKey(
         User,
@@ -28,9 +18,7 @@ class Task(models.Model):
         verbose_name="Пользователь",
     )
     task_type = models.CharField(
-        max_length=20,
-        choices=TaskType.get_choices(),
-        verbose_name="Тип задачи"
+        max_length=20, choices=TaskType.get_choices(), verbose_name="Тип задачи"
     )
     input_data = models.JSONField(verbose_name="Входные данные")
     status = models.CharField(

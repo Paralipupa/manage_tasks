@@ -124,7 +124,7 @@ class TaskDetailView(generics.RetrieveAPIView):
         serializer = self.get_serializer(task)
         if serializer.data["status"] == TaskStatus.SUCCESS.value:
             return Response(serializer.data)
-        job = AsyncResult(serializer.data["result"])
+        proc = AsyncResult(serializer.data["result"])
         result = serializer.data.copy()
-        result["status"] = job.status
+        result["status"] = proc.status
         return Response(result)
