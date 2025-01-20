@@ -57,9 +57,9 @@ services:
       timeout: 5s
       retries: 5
 
-  celery:
+  celery-processor:
     build: .
-    command: sh -c "python -m debugpy --listen 0.0.0.0:8002 -m celery -A config worker --loglevel=info"
+    command: sh -c "python -m debugpy --listen 0.0.0.0:8002 -m celery -A config worker --loglevel=info --queues=processor"
     volumes:
       - .:/app
     depends_on:
