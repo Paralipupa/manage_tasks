@@ -2,8 +2,12 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django_celery_results.models import TASK_STATE_CHOICES
 from django.db.models import QuerySet
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 from .taskstatus import TaskStatus
 from .taskprocessor import TaskProcessor, TaskType
+from .tasks import process_task
+from .helpers import get_moscow_time
 
 User = get_user_model()
 
@@ -47,3 +51,33 @@ class Task(models.Model):
                 TaskStatus.STARTED.value,
             ],
         )
+
+@receiver(post_save, sender=Task)
+def task_post_save(sender, instance, created, **kwargs):
+    """Обработчик сигнала post_save для модели Task"""
+    if created and not hasattr(instance, '_task_post_save_processed'):
+        # Устанавливаем флаг, что мы уже обработали этот инстанс
+        instance._task_post_save_processed = True
+        
+        # При создании записываем входные данные в result
+        instance.result = instance.input_data
+        
+        # Получаем время запланированного выполнения
+        scheduled_at = instance.input_data.get('scheduled_at')
+        
+        if scheduled_at:
+            eta = get_moscow_time(scheduled_at)
+            if not isinstance(eta, str):
+                # Запускаем задачу с отложенным выполнением
+                celery_task = process_task.apply_async((instance.id,), eta=eta)
+                # Обновляем статус и ID задачи
+                instance.status = celery_task.status
+                instance.result = celery_task.id
+                instance.save(update_fields=['status', 'result'])
+        else:
+            # Запускаем задачу немедленно
+            celery_task = process_task.delay(instance.id)
+            # Обновляем статус и ID задачи
+            instance.status = celery_task.status
+            instance.result = celery_task.id
+            instance.save(update_fields=['status', 'result'])

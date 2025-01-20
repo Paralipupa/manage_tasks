@@ -78,32 +78,8 @@ class TaskListCreateView(generics.ListCreateAPIView):
         serializer.is_valid(raise_exception=True)
 
         try:
-
             # Создаем задачу
             task = Task.objects.create(user=request.user, **serializer.validated_data)
-
-            # Получаем время запланированного выполнения из запроса
-            scheduled_at = request.data.get("scheduled_at")
-
-            # Запускаем Celery задачу
-            if scheduled_at:
-                eta = get_moscow_time(scheduled_at)
-                if isinstance(eta, str):
-                    return Response(
-                        {"error": eta}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                # Запускаем задачу с отложенным выполнением
-                celery_task = process_task.apply_async((task.id,), eta=eta)
-            else:
-                # Запускаем задачу немедленно
-                celery_task = process_task.delay(task.id)
-
-            # Обновляем статус, в результат записываем идентификатор задачи (при выполнении задачи будет записан результат)
-            task.status = celery_task.status
-            task.result = celery_task.id
-            task.save()
-
             return Response(TaskSerializer(task).data, status=status.HTTP_201_CREATED)
 
         except ValueError as e:
